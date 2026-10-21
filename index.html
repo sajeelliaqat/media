@@ -1129,7 +1129,22 @@ async function decide(status){
   if(status==="Approved"&&!$("rdDate").value){err.textContent="Choose the date the student should collect the equipment.";err.hidden=false;return}
   const upd={status,verified:$("rdVerified").checked,decidedBy:me?.name||"",decidedAt:new Date().toISOString()};
   if(status==="Approved"){upd.collectDate=$("rdDate").value;upd.collectTime=$("rdTime").value;upd.rejectReason=""}else upd.rejectReason=$("rdReason").value.trim();
-  try{await rqCol.doc(curReq.id).update(upd);toast(`${curReq.reqNo} ${status.toLowerCase()}`);openReq(Object.assign({},curReq,upd),status==="Approved"?"approved":"rejected")}
+  try{await rqCol.doc(curReq.id).update(upd);
+    if(status==="Approved"&&isCol&&!curReq.issueId){
+      /* approved request goes straight into the Equipment Issue register */
+      const r=Object.assign({},curReq,upd),now=new Date().toISOString(),sno=nextSno();
+      const items=splitEquip(r.equipment).map(e=>({label:e.label,code:"",qty:e.qty||"1"}));
+      const ph=r.phone&&waNumber(r.phone)?"0"+waNumber(r.phone).slice(2):(r.phone||"");
+      const data={status:"Issued",returnedOn:"",source:"Student Form",reqId:r.id,reqNo:r.reqNo||"",createdAt:now,
+        slip:"EQ-"+String(sno).padStart(4,"0"),sno,name:r.name||"",roll:String(r.roll||"").toUpperCase(),phone:ph,course:r.course||"",teacher:r.teacher||"",purpose:"Student work",
+        issueDate:r.collectDate||today(),issueTime:r.collectTime||"",returnDue:r.returnDate||"",returnTime:r.collectTime||"",project:r.project||"",submitDate:r.submitDate||"",
+        issuedBy:me?.name||"",remarks:`From student request ${r.reqNo||""}`.trim(),items,itemsText:items.map(e=>(e.qty!=="1"?e.qty+" x ":"")+e.label).join(", "),updatedAt:now};
+      try{const ref=isCol.doc();await ref.set(data);const link={status:"Issued",issueSlip:data.slip,issueId:ref.id};
+        await rqCol.doc(r.id).update(link);Object.assign(upd,link);
+        toast(`${curReq.reqNo} approved · ${data.slip} added to Equipment Issue`);openReq(Object.assign({},curReq,upd),"approved");return}
+      catch(_){toast(`${curReq.reqNo} approved — couldn't add it to Equipment Issue. Use “Create issue slip”.`);openReq(Object.assign({},curReq,upd),"approved");return}
+    }
+    toast(`${curReq.reqNo} ${status.toLowerCase()}`);openReq(Object.assign({},curReq,upd),status==="Approved"?"approved":"rejected")}
   catch(x){err.textContent="Couldn't save the decision. Try again.";err.hidden=false}
 }
 $("rdApprove").addEventListener("click",()=>decide("Approved"));
@@ -1138,10 +1153,10 @@ $("rdReopen").addEventListener("click",async()=>{try{await rqCol.doc(curReq.id).
 $("rdDel").addEventListener("click",async()=>{const b=$("rdDel");if(!b.classList.contains("armed")){b.classList.add("armed");b.textContent="Click again to delete";return}
   try{await rqCol.doc(curReq.id).delete();$("rdScrim").hidden=true;toast(`${curReq.reqNo} deleted`)}catch(_){$("rdErr").textContent="Couldn't delete the request.";$("rdErr").hidden=false}});
 function splitEquip(t){const s=String(t||"").trim();if(!s)return[];
-  const re=/([^,\n]+?)\s*(?:[-x×:=]\s*|\(\s*)(\d+)\s*\)?(?=\s*(?:,|\n|$)|\s+(?=[A-Za-z]))/g;const out=[];let m,last=0;
-  while((m=re.exec(s))){out.push({label:m[1].replace(/^[,\s]+/,"").trim(),qty:m[2]});last=re.lastIndex}
-  if(!out.length||s.slice(last).replace(/[,\s]/g,"").length)return s.split(/[,\n]/).map(x=>x.trim()).filter(Boolean).map(x=>{const q=x.match(/^(.*?)\s*[-x×:]\s*(\d+)$/);return q?{label:q[1],qty:q[2]}:{label:x,qty:"1"}});
-  return out}
+  return s.split(/\s*(?:,|\n|;)\s*/).map(x=>x.trim()).filter(Boolean).map(x=>{
+    const q=x.match(/^(.*?\S)\s*(?:[-×:=]|\bx)\s*(\d{1,3})\s*$/i)||x.match(/^(.*?\S)\s*\(\s*(\d{1,3})\s*\)$/);
+    const f=!q&&x.match(/^(\d{1,2})\s*(?:x|×)?\s+(.+)$/i);
+    return q?{label:q[1].trim(),qty:q[2]}:f?{label:f[2].trim(),qty:f[1]}:{label:x,qty:"1"}})}
 $("rdIssue").addEventListener("click",()=>{const r=curReq;$("rdScrim").hidden=true;pendingReqId=r.id;
   openIssueForm(null);
   const set=(id,v)=>{if(v)$(id).value=v};
